@@ -31,6 +31,12 @@ A **passive, scope-limited** OSINT script for cybersecurity students and defende
 python3 osint.py example.com --scope scope.txt --outdir outputs
 ```
 
+## Local GUI
+```bash
+python3 osint_gui.py
+```
+Then open: `http://127.0.0.1:8765`
+
 Optional:
 ```bash
 python3 osint.py example.com --max-subdomains 200
