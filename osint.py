@@ -336,6 +336,7 @@ def run_target(target: str, args, scope: dict) -> tuple[int, dict | None]:
 
     report = {
         "target": target,
+        "target_kind": args.target_kind,
         "generated_at": dt.datetime.now(dt.UTC).isoformat(),
         "scope_check": "PASS",
         "scope_reason": reason,
@@ -344,6 +345,16 @@ def run_target(target: str, args, scope: dict) -> tuple[int, dict | None]:
         "subdomains": passive_subdomains(target, args.max_subdomains) if not is_ip(target) else [],
         "http": http_fingerprint(target),
     }
+    if args.target_details:
+        details_path = Path(args.target_details)
+        if details_path.exists():
+            try:
+                report["target_details"] = json.loads(details_path.read_text(encoding="utf-8"))
+            except Exception as exc:
+                report["target_details_error"] = f"unable to parse target details: {exc}"
+        else:
+            report["target_details_error"] = f"target details file not found: {details_path}"
+
     report["enrichment"] = {"shodan": {"status": "skipped (--no-enrich)"}, "censys": {"status": "skipped (--no-enrich)"}} if args.no_enrich else {"shodan": shodan_enrich(target), "censys": censys_enrich(target)}
     report["findings"] = compute_findings(report)
 
@@ -406,6 +417,8 @@ def main() -> int:
     p.add_argument("--baseline-dir", help="Previous outputs dir for delta mode")
     p.add_argument("--max-subdomains", type=int, default=100)
     p.add_argument("--no-enrich", action="store_true", help="Skip Shodan/Censys enrichment")
+    p.add_argument("--target-kind", choices=["domain", "person", "username", "email"], default="domain")
+    p.add_argument("--target-details", help="Path to JSON file with additional target context")
     args = p.parse_args()
 
     if not args.target and not args.targets_file:
