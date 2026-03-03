@@ -31,14 +31,30 @@ python3 osint.py example.com --max-subdomains 200
 ```
 
 ## Scope file format (`scope.txt`)
-One entry per line:
+One rule per line. Default mode is `allow:`.
+
 ```txt
-# Allowed targets only
+# Allow root domain (+ all subdomains)
 example.com
-example.org
+
+# Explicit wildcard (subdomains only, not apex)
+allow:*.corp.example
+
+# Allow an IP or CIDR
+allow:203.0.113.10
+allow:203.0.113.0/24
+
+# Deny takes priority over allow
+deny:admin.example.com
+deny:203.0.113.66
 ```
 
-Subdomains are automatically permitted when the root domain is listed.
+Rules supported:
+- Domains (apex + subdomains)
+- Wildcards (`*.domain.tld`)
+- IPv4/IPv6
+- CIDR blocks
+- `allow:` / `deny:` prefixes (`deny` always wins)
 
 ## Output
 - `outputs/<target>.json` — machine-readable full report
