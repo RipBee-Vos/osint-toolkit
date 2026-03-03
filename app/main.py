@@ -1,6 +1,7 @@
 from __future__ import annotations
 import json
 import subprocess
+import sys
 from datetime import datetime, UTC
 from pathlib import Path
 
@@ -31,7 +32,7 @@ def now_iso() -> str:
 
 def run_scan(target: str, scope_file: str, outdir: str, no_enrich: bool = True) -> tuple[int, str]:
     cmd = [
-        "python3",
+        sys.executable,
         str(ROOT / "osint.py"),
         target,
         "--scope",
@@ -41,7 +42,10 @@ def run_scan(target: str, scope_file: str, outdir: str, no_enrich: bool = True) 
     ]
     if no_enrich:
         cmd.append("--no-enrich")
-    p = subprocess.run(cmd, cwd=str(ROOT), capture_output=True, text=True)
+    try:
+        p = subprocess.run(cmd, cwd=str(ROOT), capture_output=True, text=True)
+    except FileNotFoundError as exc:
+        return 1, f"Unable to start scan process: {exc}"
     return p.returncode, (p.stdout or "") + ("\n" + p.stderr if p.stderr else "")
 
 

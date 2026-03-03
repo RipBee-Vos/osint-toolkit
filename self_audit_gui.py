@@ -4,6 +4,7 @@
 from __future__ import annotations
 import html
 import subprocess
+import sys
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
@@ -16,7 +17,7 @@ PORT = 8770
 
 def run_self_audit(url: str, allowlist: str, outdir: str) -> tuple[int, str]:
     cmd = [
-        "python3",
+        sys.executable,
         str(ROOT / "self_audit.py"),
         url,
         "--allowlist",
@@ -24,7 +25,10 @@ def run_self_audit(url: str, allowlist: str, outdir: str) -> tuple[int, str]:
         "--outdir",
         outdir,
     ]
-    p = subprocess.run(cmd, capture_output=True, text=True, cwd=str(ROOT))
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True, cwd=str(ROOT))
+    except FileNotFoundError as exc:
+        return 1, f"Unable to start self-audit process: {exc}"
     output = (p.stdout or "") + ("\n" + p.stderr if p.stderr else "")
     return p.returncode, output.strip()
 
@@ -41,14 +45,17 @@ def list_reports() -> list[str]:
 
 
 def run_people_search(name: str, location: str, company: str, username: str, outdir: str) -> tuple[int, str]:
-    cmd = ["python3", str(ROOT / "people_search.py"), name, "--outdir", outdir]
+    cmd = [sys.executable, str(ROOT / "people_search.py"), name, "--outdir", outdir]
     if location:
         cmd.extend(["--location", location])
     if company:
         cmd.extend(["--company", company])
     if username:
         cmd.extend(["--username", username])
-    p = subprocess.run(cmd, capture_output=True, text=True, cwd=str(ROOT))
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True, cwd=str(ROOT))
+    except FileNotFoundError as exc:
+        return 1, f"Unable to start people-search process: {exc}"
     output = (p.stdout or "") + ("\n" + p.stderr if p.stderr else "")
     return p.returncode, output.strip()
 
