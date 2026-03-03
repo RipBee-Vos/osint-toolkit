@@ -101,3 +101,19 @@ Include in your repo:
 3. Methodology (passive only)
 4. Findings with confidence levels
 5. Limitations and next steps
+
+## Ethics-first portfolio bundle (included)
+- `program_scope.md` — authorization + rules-of-engagement template
+- `blue_team_playbook.md` — monthly external-surface workflow
+- `demo_targets.txt` — safe sample targets for screenshots/demo runs
+
+## Demo mode (safe examples)
+```bash
+python3 osint.py --targets-file demo_targets.txt --scope scope.txt --outdir outputs --no-enrich
+```
+
+## Bug-bounty safe scope import
+Prepare `assets.txt` from program in-scope assets (one per line), then import:
+```bash
+python3 import_scope.py assets.txt scope.txt
+```

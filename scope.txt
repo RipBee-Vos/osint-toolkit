@@ -1,15 +1,11 @@
 # Authorized targets only. Use allow:/deny: rules.
+# Replace examples with assets you own or are permitted to assess.
 
-# Allow root domain (+ subdomains)
 allow:example.com
-
-# Allow wildcard subdomains only
 allow:*.lab.example.com
-
-# Allow IP/CIDR
 allow:203.0.113.10
 allow:203.0.113.0/24
 
-# Deny rules override allow
+# deny rules override allow
 # deny:admin.example.com
 # deny:203.0.113.66

@@ -1,0 +1,3 @@
+# Demo-only targets for portfolio screenshots (safe examples)
+example.com
+www.example.com
