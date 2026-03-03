@@ -37,6 +37,15 @@ python3 osint_gui.py
 ```
 Then open: `http://127.0.0.1:8765`
 
+## FastAPI Case Runner (authorized org/assets only)
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements-fastapi.txt
+uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+```
+Open: `http://127.0.0.1:8000`
+
 Optional:
 ```bash
 python3 osint.py example.com --max-subdomains 200

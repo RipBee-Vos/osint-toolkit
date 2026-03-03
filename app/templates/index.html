@@ -1,0 +1,37 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>OSINT Case Runner</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <main class="wrap">
+    <h1>OSINT Case Runner</h1>
+    <p>Authorized organization/assets only. No people-targeting workflows.</p>
+
+    <section class="card">
+      <h2>Create Case</h2>
+      <form method="post" action="/cases/create">
+        <label>Engagement ID <input name="engagement_id" required placeholder="ENG-0001"/></label>
+        <label>Purpose <input name="purpose" required placeholder="corp-authorized-exposure-review"/></label>
+        <label>Target <input name="target" required placeholder="example.com"/></label>
+        <label>Scope file <input name="scope_file" value="scope.txt"/></label>
+        <label>Output dir <input name="outdir" value="outputs"/></label>
+        <button type="submit">Create</button>
+      </form>
+    </section>
+
+    <section class="card">
+      <h2>Recent Cases</h2>
+      <ul>
+      {% for c in cases %}
+        <li><a href="/cases/{{c['id']}}">#{{c['id']}} {{c['target']}}</a> — {{c['status']}} — {{c['engagement_id']}}</li>
+      {% else %}
+        <li>No cases yet.</li>
+      {% endfor %}
+      </ul>
+    </section>
+  </main>
+</body>
+</html>

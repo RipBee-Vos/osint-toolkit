@@ -1,0 +1,42 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Case {{case['id']}}</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <main class="wrap">
+    <p><a href="/">← Back</a></p>
+    <h1>Case #{{case['id']}} — {{case['target']}}</h1>
+    <div class="card">
+      <p><b>Status:</b> {{case['status']}}</p>
+      <p><b>Engagement:</b> {{case['engagement_id']}}</p>
+      <p><b>Purpose:</b> {{case['purpose']}}</p>
+      <p><b>Scope:</b> {{case['scope_file']}}</p>
+      {% if case['error_message'] %}<pre>{{case['error_message']}}</pre>{% endif %}
+      <form method="post" action="/cases/{{case['id']}}/run">
+        <button type="submit">Run Scan</button>
+      </form>
+    </div>
+
+    <div class="card">
+      <h2>Findings</h2>
+      <table>
+        <tr><th>ID</th><th>Severity</th><th>Confidence</th><th>Evidence</th><th>Recommendation</th></tr>
+        {% for f in findings %}
+        <tr>
+          <td>{{f['finding_id']}}</td>
+          <td>{{f['severity']}}</td>
+          <td>{{f['confidence']}}</td>
+          <td>{{f['evidence']}}</td>
+          <td>{{f['recommendation']}}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="5">No findings yet.</td></tr>
+        {% endfor %}
+      </table>
+    </div>
+  </main>
+</body>
+</html>
