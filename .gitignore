@@ -1,2 +1,6 @@
 __pycache__/
 *.pyc
+outputs/
+.venv/
+*.local.*
+targets.local.txt

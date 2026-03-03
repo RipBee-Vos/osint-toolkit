@@ -146,15 +146,17 @@ def run_scan(
     return p.returncode, output.strip()
 
 
-def list_reports() -> list[str]:
+def list_reports() -> list[dict]:
     if not OUT.exists():
         return []
-    exts = {".md", ".html", ".json", ".csv", ".txt", ".log"}
-    files: list[str] = []
-    for p in OUT.rglob("*"):
-        if p.is_file() and p.suffix.lower() in exts:
-            files.append(str(p.relative_to(OUT)))
-    return sorted(files)
+    runs: list[dict] = []
+    for run_dir in [p for p in OUT.iterdir() if p.is_dir()]:
+        files = [f for f in sorted(run_dir.iterdir()) if f.is_file()]
+        rel_files = [str(f.relative_to(OUT)) for f in files]
+        ts = run_dir.stat().st_mtime
+        runs.append({"run_id": run_dir.name, "mtime": ts, "files": rel_files})
+    runs.sort(key=lambda x: x["mtime"], reverse=True)
+    return runs
 
 
 def _guess_run_outputs(run_dir: Path, target_kind: str, target_value: str) -> list[Path]:
@@ -180,12 +182,7 @@ def _guess_run_outputs(run_dir: Path, target_kind: str, target_value: str) -> li
                 candidates.append(p)
         return candidates
 
-    stem = (
-        (target_value or "")
-        .replace("*", "wildcard")
-        .replace("/", "_")
-        .replace(":", "_")
-    )
+    stem = (target_value or "").replace("*", "wildcard").replace("/", "_").replace(":", "_")
 
     for name in (
         f"{stem}.html",
@@ -210,15 +207,41 @@ def _guess_run_outputs(run_dir: Path, target_kind: str, target_value: str) -> li
 
 
 def _page(title: str, body: str) -> bytes:
+    style = """
+<style>
+:root { color-scheme: light; }
+* { box-sizing: border-box; }
+body { margin: 0; font-family: Inter, Segoe UI, Arial, sans-serif; background: #f3f5f8; color: #17212f; }
+.container { max-width: 1100px; margin: 0 auto; padding: 24px 16px 40px; }
+.header { background: #fff; border: 1px solid #dce2ea; border-radius: 14px; padding: 18px; box-shadow: 0 5px 20px rgba(20, 31, 45, 0.07); }
+.subtitle { margin: 6px 0 0; color: #4a5b72; }
+.notice { margin-top: 10px; padding: 10px 12px; border-radius: 10px; background: #fff8e6; border: 1px solid #f3dd9a; color: #5f4700; font-size: 14px; }
+.card { margin-top: 16px; background: #fff; border: 1px solid #dce2ea; border-radius: 14px; padding: 16px; box-shadow: 0 4px 14px rgba(20, 31, 45, 0.05); }
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.stack { display: grid; gap: 10px; }
+label { display: grid; gap: 6px; font-weight: 600; font-size: 14px; }
+input, select, textarea { width: 100%; border: 1px solid #c8d1de; border-radius: 10px; padding: 10px; font: inherit; background: #fff; }
+input:focus, select:focus, textarea:focus, button:focus { outline: 2px solid #4f7cff; outline-offset: 1px; }
+details { border: 1px solid #e4e9f1; border-radius: 10px; padding: 10px; background: #fafbfd; }
+summary { cursor: pointer; font-weight: 600; }
+button { border: 0; border-radius: 10px; background: #1f5eff; color: #fff; padding: 11px 16px; cursor: pointer; font-weight: 700; box-shadow: 0 5px 14px rgba(31, 94, 255, 0.25); }
+button:hover { background: #184bd0; }
+.badge { display: inline-block; padding: 4px 9px; border-radius: 999px; font-weight: 700; font-size: 12px; }
+.badge.pass { background: #e7f8ee; color: #1e7a41; border: 1px solid #a8e2bf; }
+.badge.fail { background: #fdeceb; color: #a1261b; border: 1px solid #f4b6b1; }
+@media (max-width: 820px) { .grid { grid-template-columns: 1fr; } }
+</style>
+"""
     doc = f"""<!doctype html>
 <html>
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta charset=\"utf-8\">
+  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">
   <title>{html.escape(title)}</title>
+  {style}
 </head>
-<body style="font-family:Arial, sans-serif; max-width: 980px; margin: 24px auto; padding: 0 12px;">
-{body}
+<body>
+<div class=\"container\">{body}</div>
 </body>
 </html>
 """
@@ -257,120 +280,121 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(content)
             return
 
-        reports = "".join(
-            f"<li><a href='/file?name={urllib.parse.quote(name)}' target='_blank'>{html.escape(name)}</a></li>"
-            for name in list_reports()
-        )
+        run_items = []
+        for run in list_reports()[:10]:
+            files = "".join(
+                f"<li><a href='/file?name={urllib.parse.quote(name)}' target='_blank'>{html.escape(Path(name).name)}</a></li>"
+                for name in run["files"]
+                if Path(name).name.endswith((".html", ".md", ".json", ".csv", ".txt"))
+            )
+            run_items.append(
+                f"<details><summary>{html.escape(run['run_id'])}</summary>"
+                f"<ul>{files or '<li>No files</li>'}</ul></details>"
+            )
 
         body = f"""
-<h1>OSINT Toolkit GUI</h1>
+<div class="header">
+  <h1>OSINT Toolkit GUI</h1>
+  <p class="subtitle">Local-only interface for authorized passive recon and seed + manual pivots workflows.</p>
+  <div class="notice">Safety: scope required for domain mode.</div>
+</div>
 
-<form method="post" action="/run" style="display:grid; gap:12px; max-width: 820px; padding: 12px; border: 1px solid #ddd; border-radius: 10px;">
-  <fieldset style="border: 1px solid #eee; border-radius: 10px; padding: 12px;">
-    <legend style="padding: 0 6px;">Target</legend>
-
-    <label style="display:block; margin-bottom:8px;">
-      Target type
-      <select name="target_kind" style="width: 100%; padding: 8px;">
+<form method="post" action="/run" class="card stack" id="scan-form">
+  <div class="grid">
+    <label>Target type
+      <select name="target_kind" id="target_kind">
         <option value="domain" selected>Domain</option>
         <option value="person">Person</option>
         <option value="username">Username</option>
         <option value="email">Email</option>
       </select>
     </label>
-
-    <label style="display:block;">
-      Target value
-      <input name="target" placeholder="example.com or Jane Doe or handle" required style="width: 100%; padding: 8px;" />
+    <label>Target value
+      <input name="target" placeholder="example.com or Jane Doe or handle" required />
     </label>
-  </fieldset>
+  </div>
 
-  <fieldset style="border: 1px solid #eee; border-radius: 10px; padding: 12px;">
-    <legend style="padding: 0 6px;">More details (optional)</legend>
-
-    <label style="display:block;">
-      Name
-      <input name="name" placeholder="Full name" style="width: 100%; padding: 8px;" />
-    </label>
-
-    <label style="display:block;">
-      Aliases (one per line)
-      <textarea name="aliases" rows="3" placeholder="Nicknames, alternate spellings" style="width: 100%; padding: 8px;"></textarea>
-    </label>
-
-    <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px;">
-      <label>City <input name="loc_city" style="width: 100%; padding: 8px;" /></label>
-      <label>State/Region <input name="loc_state" style="width: 100%; padding: 8px;" /></label>
-      <label>Country <input name="loc_country" style="width: 100%; padding: 8px;" /></label>
+  <details open>
+    <summary>Scan settings</summary>
+    <div class="grid" style="margin-top:10px;">
+      <label>Scope file <input name="scope" value="scope.txt" /></label>
+      <label>Output dir <input name="outdir" value="outputs" /></label>
     </div>
-
-    <label style="display:block;">
-      Usernames (one per line)
-      <textarea name="usernames" rows="3" placeholder="Known handles" style="width: 100%; padding: 8px;"></textarea>
-    </label>
-
-    <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 8px;">
-      <label>Emails (one per line)
-        <textarea name="emails" rows="3" style="width: 100%; padding: 8px;"></textarea>
+    <div id="domain-settings" class="grid" style="margin-top:10px;">
+      <label>Max subdomains
+        <input name="max_subdomains" type="number" value="100" min="1" max="1000" />
       </label>
-      <label>Phones (one per line)
-        <textarea name="phones" rows="3" style="width: 100%; padding: 8px;"></textarea>
+      <label style="align-self:end;">
+        <span><input name="no_enrich" type="checkbox" checked /> No enrichment (domain mode)</span>
       </label>
     </div>
+    <label id="pivot-setting" style="margin-top:10px;">
+      <span><input name="blanket_pivots" type="checkbox" checked /> Blanket pivots (seed modes)</span>
+    </label>
+  </details>
 
-    <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 8px;">
-      <label>LinkedIn <input name="social_linkedin" placeholder="profile URL or handle" style="width: 100%; padding: 8px;" /></label>
-      <label>GitHub <input name="social_github" placeholder="username or URL" style="width: 100%; padding: 8px;" /></label>
-      <label>X <input name="social_x" placeholder="handle or URL" style="width: 100%; padding: 8px;" /></label>
-      <label>Facebook <input name="social_facebook" placeholder="URL" style="width: 100%; padding: 8px;" /></label>
-      <label>Instagram <input name="social_instagram" placeholder="handle or URL" style="width: 100%; padding: 8px;" /></label>
-      <label>TikTok <input name="social_tiktok" placeholder="handle or URL" style="width: 100%; padding: 8px;" /></label>
-      <label>Reddit <input name="social_reddit" placeholder="u/username" style="width: 100%; padding: 8px;" /></label>
-      <label>Website <input name="social_website" placeholder="https://..." style="width: 100%; padding: 8px;" /></label>
+  <details id="seed-details" open>
+    <summary>More details (optional)</summary>
+    <div class="stack" style="margin-top:10px;">
+      <label>Name <input name="name" placeholder="Full name" /></label>
+      <label>Aliases (one per line)<textarea name="aliases" rows="3"></textarea></label>
+      <div class="grid">
+        <label>City <input name="loc_city" /></label>
+        <label>State/Region <input name="loc_state" /></label>
+      </div>
+      <label>Country <input name="loc_country" /></label>
+      <label>Usernames (one per line)<textarea name="usernames" rows="3"></textarea></label>
+      <div class="grid">
+        <label>Emails (one per line)<textarea name="emails" rows="3"></textarea></label>
+        <label>Phones (one per line)<textarea name="phones" rows="3"></textarea></label>
+      </div>
+      <div class="grid">
+        <label>LinkedIn <input name="social_linkedin" /></label>
+        <label>GitHub <input name="social_github" /></label>
+        <label>X <input name="social_x" /></label>
+        <label>Facebook <input name="social_facebook" /></label>
+        <label>Instagram <input name="social_instagram" /></label>
+        <label>TikTok <input name="social_tiktok" /></label>
+        <label>Reddit <input name="social_reddit" /></label>
+        <label>Website <input name="social_website" /></label>
+      </div>
+      <label>Other social links (one per line)<textarea name="social_other" rows="3"></textarea></label>
+      <label>Notes<textarea name="notes" rows="4"></textarea></label>
     </div>
+  </details>
 
-    <label style="display:block;">
-      Other social links (one per line)
-      <textarea name="social_other" rows="3" placeholder="Other profile URLs" style="width: 100%; padding: 8px;"></textarea>
-    </label>
-
-    <label style="display:block;">
-      Notes
-      <textarea name="notes" rows="4" placeholder="Anything else that could help narrow results" style="width: 100%; padding: 8px;"></textarea>
-    </label>
-  </fieldset>
-
-  <fieldset style="border: 1px solid #eee; border-radius: 10px; padding: 12px;">
-    <legend style="padding: 0 6px;">Scan settings</legend>
-
-    <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 8px;">
-      <label>Scope file <input name="scope" value="scope.txt" style="width: 100%; padding: 8px;" /></label>
-      <label>Output dir <input name="outdir" value="outputs" style="width: 100%; padding: 8px;" /></label>
-    </div>
-
-    <label style="display:block;">
-      Max subdomains
-      <input name="max_subdomains" type="number" value="100" min="1" max="1000" style="width: 100%; padding: 8px;" />
-    </label>
-
-    <label style="display:block; margin-top: 6px;">
-      <input name="no_enrich" type="checkbox" checked /> No enrichment (domain mode)
-    </label>
-
-    <label style="display:block; margin-top: 6px;">
-      <input name="blanket_pivots" type="checkbox" checked /> Blanket pivots (person/username/email modes)
-    </label>
-  </fieldset>
-
-  <button type="submit" style="padding: 10px 14px; border-radius: 10px; border: 1px solid #333; background: #fff; cursor: pointer;">
-    Run Scan
-  </button>
+  <button type="submit">Run Scan</button>
 </form>
 
-<h2 style="margin-top: 24px;">Reports</h2>
-<ul>
-  {reports or "<li>No reports yet</li>"}
-</ul>
+<div class="card">
+  <h2>Recent Runs</h2>
+  {''.join(run_items) or '<p>No runs yet</p>'}
+</div>
+
+<script>
+(function() {{
+  const targetKind = document.getElementById('target_kind');
+  const seedDetails = document.getElementById('seed-details');
+  const domainSettings = document.getElementById('domain-settings');
+  const pivotSetting = document.getElementById('pivot-setting');
+  const blanket = document.querySelector('input[name="blanket_pivots"]');
+  const noEnrich = document.querySelector('input[name="no_enrich"]');
+  const maxSubdomains = document.querySelector('input[name="max_subdomains"]');
+
+  function syncView() {{
+    const isDomain = targetKind.value === 'domain';
+    seedDetails.style.display = isDomain ? 'none' : 'block';
+    domainSettings.style.display = isDomain ? 'grid' : 'none';
+    pivotSetting.style.display = isDomain ? 'none' : 'block';
+    blanket.disabled = isDomain;
+    noEnrich.disabled = !isDomain;
+    maxSubdomains.disabled = !isDomain;
+  }}
+
+  targetKind.addEventListener('change', syncView);
+  syncView();
+}})();
+</script>
 """
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -393,7 +417,7 @@ class Handler(BaseHTTPRequestHandler):
         ok, msg = _validate_target(target_kind, target)
         if not ok:
             body = f"""
-<h1>Run Result: FAIL</h1>
+<h1>Run Result <span class='badge fail'>FAIL</span></h1>
 <p style="color:#b00020;"><b>Validation error:</b> {html.escape(msg)}</p>
 <p><a href="/">Back</a></p>
 """
@@ -428,29 +452,45 @@ class Handler(BaseHTTPRequestHandler):
             blanket_pivots=blanket_pivots,
         )
 
-        status = "PASS" if rc == 0 else f"FAIL (rc={rc})"
+        is_ok = rc == 0
+        badge = "<span class='badge pass'>PASS</span>" if is_ok else f"<span class='badge fail'>FAIL (rc={rc})</span>"
         rel_details = str(details_path.relative_to(OUT)) if OUT in details_path.parents else str(details_path.name)
 
         produced = _guess_run_outputs(run_dir, target_kind, target)
+        def pick(ext: str) -> str | None:
+            for p in produced:
+                if p.suffix == ext:
+                    rel = str(p.relative_to(OUT)) if OUT in p.parents else p.name
+                    return f"<a href='/file?name={urllib.parse.quote(rel)}' target='_blank'>{html.escape(p.name)}</a>"
+            return None
+
+        primary = pick('.html') or pick('.md') or pick('.json') or "No primary artifact found"
         links = []
         for p in produced:
             rel = str(p.relative_to(OUT)) if OUT in p.parents else p.name
-            label = p.name
-            links.append(f"<li><a href='/file?name={urllib.parse.quote(rel)}' target='_blank'>{html.escape(label)}</a></li>")
+            links.append(f"<li><a href='/file?name={urllib.parse.quote(rel)}' target='_blank'>{html.escape(p.name)}</a></li>")
         produced_html = "<ul>" + "".join(links) + "</ul>" if links else "<p><i>No outputs found in the run folder.</i></p>"
 
         body = f"""
-<h1>Run Result: {html.escape(status)}</h1>
-<p><b>Run folder:</b> {html.escape(str(run_dir.relative_to(ROOT)))}</p>
-<p><b>Target details:</b> <a href="/file?name={urllib.parse.quote(rel_details)}" target="_blank">target_details.json</a></p>
-
-<h2>Generated Reports</h2>
-{produced_html}
-
-<pre style="white-space:pre-wrap; background:#f5f5f5; padding:12px; border-radius:10px; border:1px solid #ddd;">{html.escape(output or "(no output)")}</pre>
-<p><a href="/">Back</a></p>
+<div class="card">
+  <h1>Run Result {badge}</h1>
+  <p><b>Run folder:</b> {html.escape(str(run_dir.relative_to(ROOT)))}</p>
+  <p><b>Target details:</b> <a href="/file?name={urllib.parse.quote(rel_details)}" target="_blank">target_details.json</a></p>
+  <p><b>Primary artifact:</b> {primary}</p>
+</div>
+<div class="card">
+  <h2>Generated Reports</h2>
+  {produced_html}
+</div>
+<div class="card">
+  <details>
+    <summary>Runtime output</summary>
+    <pre style="white-space:pre-wrap; background:#f6f8fb; padding:12px; border-radius:10px; border:1px solid #dbe3ef;">{html.escape(output or '(no output)')}</pre>
+  </details>
+  <p><a href="/">Back</a></p>
+</div>
 """
-        self.send_response(200)
+        self.send_response(200 if is_ok else 500)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.end_headers()
         self.wfile.write(_page("Run Result", body))
