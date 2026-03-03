@@ -14,11 +14,15 @@ A **passive, scope-limited** OSINT script for cybersecurity students and defende
 
 ## Features
 - Scope enforcement via `scope.txt` (hard stop when out-of-scope)
+- Allow/deny rules, wildcard domains, IPs, and CIDR ranges
 - DNS collection (A/AAAA/NS/MX/TXT)
 - RDAP metadata lookup
 - Passive subdomain discovery (crt.sh)
 - HTTP header/title fingerprint
 - TLS certificate metadata
+- Severity-tagged findings (`info`/`low`/`medium`)
+- Output formats: JSON + Markdown + CSV findings
+- Optional enrichment: Shodan + Censys (via environment variables)
 
 ## Usage
 ```bash
@@ -28,6 +32,9 @@ python3 osint.py example.com --scope scope.txt --outdir outputs
 Optional:
 ```bash
 python3 osint.py example.com --max-subdomains 200
+python3 osint.py https://portal.example.com --scope scope.txt
+python3 osint.py 203.0.113.10 --scope scope.txt
+python3 osint.py example.com --no-enrich
 ```
 
 ## Scope file format (`scope.txt`)
@@ -59,6 +66,18 @@ Rules supported:
 ## Output
 - `outputs/<target>.json` — machine-readable full report
 - `outputs/<target>.md` — human-readable summary
+- `outputs/<target>.findings.csv` — severity-tagged findings table
+
+## Optional Enrichment (API keys)
+Set environment variables to enable passive enrichment:
+
+```bash
+export SHODAN_API_KEY="..."
+export CENSYS_API_ID="..."
+export CENSYS_API_SECRET="..."
+```
+
+If keys are missing, enrichment is skipped safely and reported in output.
 
 ## Ethics / Legal
 Use only on systems and domains you own or have explicit written permission to test.

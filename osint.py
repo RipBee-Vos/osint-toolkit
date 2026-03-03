@@ -5,14 +5,16 @@ Ethical OSINT Toolkit (authorized use only)
 - Passive recon only
 - Scope-restricted (targets must be in scope file)
 - Supports allow/deny, wildcard domains, CIDR/IP entries
-- Outputs JSON + Markdown summary
+- Outputs JSON + Markdown + CSV summary
 """
 
 from __future__ import annotations
 import argparse
+import csv
 import datetime as dt
 import ipaddress
 import json
+import os
 import re
 import socket
 import ssl
@@ -21,13 +23,18 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-USER_AGENT = "Ethical-OSINT-Toolkit/1.1"
+USER_AGENT = "Ethical-OSINT-Toolkit/1.2"
 CRT_SH = "https://crt.sh/?q={query}&output=json"
 RDAP_HINT = "https://rdap.org/domain/{domain}"
+SHODAN_HOST_API = "https://api.shodan.io/shodan/host/{target}?key={key}"
+CENSYS_HOST_API = "https://search.censys.io/api/v2/hosts/{target}"
 
 
-def http_get(url: str, timeout: int = 12) -> str:
-    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+def http_get(url: str, timeout: int = 12, headers: dict | None = None) -> str:
+    hdr = {"User-Agent": USER_AGENT}
+    if headers:
+        hdr.update(headers)
+    req = urllib.request.Request(url, headers=hdr)
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return r.read().decode("utf-8", errors="replace")
 
@@ -101,23 +108,20 @@ def load_scope(scope_file: Path) -> dict:
 def domain_matches(host: str, domains: set[str], wildcards: set[str]) -> bool:
     if host in domains:
         return True
-    # root domain allows subdomains by design
     if any(host == d or host.endswith("." + d) for d in domains):
         return True
-    # wildcard only allows subdomains, not root
     if any(host.endswith("." + w) for w in wildcards):
         return True
     return False
 
 
-def target_in_networks(target: str, cidrs: list[ipaddress._BaseNetwork], ips: set[str]) -> bool:
+def target_in_networks(target: str, cidrs, ips: set[str]) -> bool:
     if is_ip(target):
         if target in ips:
             return True
         ip_obj = ipaddress.ip_address(target)
         return any(ip_obj in n for n in cidrs)
 
-    # domain target: resolve and check resolved IPs against IP/CIDR scope
     resolved = set()
     try:
         infos = socket.getaddrinfo(target, None)
@@ -256,6 +260,142 @@ def http_fingerprint(host: str) -> dict:
     return result
 
 
+def resolve_ips(target: str) -> list[str]:
+    if is_ip(target):
+        return [target]
+    ips = set()
+    try:
+        infos = socket.getaddrinfo(target, None)
+        for item in infos:
+            ips.add(item[4][0])
+    except Exception:
+        pass
+    return sorted(ips)
+
+
+def shodan_enrich(target: str) -> dict:
+    key = os.getenv("SHODAN_API_KEY")
+    if not key:
+        return {"status": "skipped (no SHODAN_API_KEY)"}
+
+    ips = resolve_ips(target)
+    if not ips:
+        return {"status": "skipped (no resolvable ip)"}
+
+    results = []
+    for ip in ips[:3]:
+        try:
+            url = SHODAN_HOST_API.format(target=ip, key=urllib.parse.quote(key))
+            data = json.loads(http_get(url, timeout=15))
+            results.append(
+                {
+                    "ip": ip,
+                    "org": data.get("org"),
+                    "os": data.get("os"),
+                    "ports": data.get("ports", []),
+                    "tags": data.get("tags", []),
+                }
+            )
+        except Exception as e:
+            results.append({"ip": ip, "error": str(e)})
+    return {"status": "ok", "hosts": results}
+
+
+def censys_enrich(target: str) -> dict:
+    api_id = os.getenv("CENSYS_API_ID")
+    api_secret = os.getenv("CENSYS_API_SECRET")
+    if not api_id or not api_secret:
+        return {"status": "skipped (no CENSYS_API_ID/CENSYS_API_SECRET)"}
+
+    ips = resolve_ips(target)
+    if not ips:
+        return {"status": "skipped (no resolvable ip)"}
+
+    basic = f"{api_id}:{api_secret}".encode("utf-8")
+    import base64
+
+    auth = base64.b64encode(basic).decode("utf-8")
+    headers = {"Authorization": f"Basic {auth}"}
+
+    results = []
+    for ip in ips[:3]:
+        try:
+            url = CENSYS_HOST_API.format(target=ip)
+            data = json.loads(http_get(url, timeout=15, headers=headers))
+            d = data.get("result", {})
+            services = d.get("services", [])
+            results.append(
+                {
+                    "ip": ip,
+                    "services_count": len(services),
+                    "services_sample": [
+                        {"port": s.get("port"), "service_name": s.get("service_name")}
+                        for s in services[:10]
+                    ],
+                }
+            )
+        except Exception as e:
+            results.append({"ip": ip, "error": str(e)})
+    return {"status": "ok", "hosts": results}
+
+
+def compute_findings(report: dict) -> list[dict]:
+    findings = []
+    hdrs = report.get("http", {}).get("headers", {})
+
+    if report.get("http", {}).get("url", "").startswith("http://"):
+        findings.append(
+            {
+                "id": "http_no_tls",
+                "severity": "medium",
+                "evidence": "Site responded over HTTP",
+                "recommendation": "Prefer HTTPS-only with HSTS",
+            }
+        )
+
+    if hdrs and "Strict-Transport-Security" not in hdrs:
+        findings.append(
+            {
+                "id": "missing_hsts",
+                "severity": "low",
+                "evidence": "HSTS header not observed",
+                "recommendation": "Add Strict-Transport-Security header",
+            }
+        )
+
+    if hdrs.get("Server"):
+        findings.append(
+            {
+                "id": "server_banner_exposed",
+                "severity": "info",
+                "evidence": f"Server header present: {hdrs.get('Server')}",
+                "recommendation": "Reduce banner detail where possible",
+            }
+        )
+
+    if hdrs.get("X-Powered-By"):
+        findings.append(
+            {
+                "id": "powered_by_exposed",
+                "severity": "low",
+                "evidence": f"X-Powered-By present: {hdrs.get('X-Powered-By')}",
+                "recommendation": "Suppress framework/version disclosure",
+            }
+        )
+
+    if report.get("subdomains") and len(report["subdomains"]) > 50:
+        findings.append(
+            {
+                "id": "large_subdomain_surface",
+                "severity": "info",
+                "evidence": f"{len(report['subdomains'])} passive subdomains discovered",
+                "recommendation": "Review external attack surface and stale DNS entries",
+            }
+        )
+
+    return findings
+
+
 def build_markdown(report: dict) -> str:
     lines = []
     lines.append(f"# OSINT Report: {report['target']}")
@@ -264,14 +404,27 @@ def build_markdown(report: dict) -> str:
     lines.append(f"- Scope check: {report['scope_check']}")
     lines.append(f"- Scope reason: {report.get('scope_reason')}")
     lines.append("")
+
+    lines.append("## Findings")
+    findings = report.get("findings", [])
+    if not findings:
+        lines.append("- No notable passive findings generated.")
+    else:
+        for f in findings:
+            lines.append(f"- [{f['severity'].upper()}] {f['id']}: {f['evidence']}")
+            lines.append(f"  - Recommendation: {f['recommendation']}")
+    lines.append("")
+
     lines.append("## DNS")
     for k, v in report.get("dns", {}).items():
         lines.append(f"- {k}: {', '.join(v) if v else 'None'}")
     lines.append("")
+
     lines.append("## RDAP")
     lines.append(f"- Status: {report.get('rdap', {}).get('status')}")
     lines.append(f"- Source: {report.get('rdap', {}).get('source')}")
     lines.append("")
+
     lines.append("## Passive Subdomains (crt.sh)")
     subs = report.get("subdomains", [])
     lines.append(f"- Count: {len(subs)}")
@@ -280,6 +433,7 @@ def build_markdown(report: dict) -> str:
     if len(subs) > 25:
         lines.append(f"  - ... (+{len(subs)-25} more)")
     lines.append("")
+
     lines.append("## HTTP/TLS Fingerprint")
     http = report.get("http", {})
     lines.append(f"- URL: {http.get('url')}")
@@ -290,11 +444,26 @@ def build_markdown(report: dict) -> str:
         if hk in hdrs:
             lines.append(f"- {hk}: {hdrs.get(hk)}")
     lines.append("")
+
+    lines.append("## Enrichment")
+    lines.append(f"- Shodan: {report.get('enrichment', {}).get('shodan', {}).get('status')}")
+    lines.append(f"- Censys: {report.get('enrichment', {}).get('censys', {}).get('status')}")
+    lines.append("")
+
     lines.append("## Ethics & Limits")
     lines.append("- Passive recon only; no exploitation attempted.")
     lines.append("- Data quality may vary by source and time.")
     lines.append("- Use only on assets you are authorized to assess.")
     return "\n".join(lines) + "\n"
+
+
+def write_findings_csv(path: Path, target: str, findings: list[dict]) -> None:
+    with path.open("w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=["target", "id", "severity", "evidence", "recommendation"])
+        w.writeheader()
+        for item in findings:
+            row = {"target": target, **item}
+            w.writerow(row)
 
 
 def main() -> int:
@@ -303,6 +472,7 @@ def main() -> int:
     p.add_argument("--scope", default="scope.txt", help="Path to allowed scope file")
     p.add_argument("--outdir", default="outputs", help="Output directory")
     p.add_argument("--max-subdomains", type=int, default=100)
+    p.add_argument("--no-enrich", action="store_true", help="Skip Shodan/Censys enrichment")
     args = p.parse_args()
 
     target = normalize_target(args.target)
@@ -328,17 +498,34 @@ def main() -> int:
         "http": http_fingerprint(target),
     }
 
+    if args.no_enrich:
+        enrichment = {
+            "shodan": {"status": "skipped (--no-enrich)"},
+            "censys": {"status": "skipped (--no-enrich)"},
+        }
+    else:
+        enrichment = {
+            "shodan": shodan_enrich(target),
+            "censys": censys_enrich(target),
+        }
+
+    report["enrichment"] = enrichment
+    report["findings"] = compute_findings(report)
+
     outdir = Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
     stem = target.replace("*", "wildcard").replace("/", "_").replace(":", "_")
     json_path = outdir / f"{stem}.json"
     md_path = outdir / f"{stem}.md"
+    csv_path = outdir / f"{stem}.findings.csv"
 
     json_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
     md_path.write_text(build_markdown(report), encoding="utf-8")
+    write_findings_csv(csv_path, target, report["findings"])
 
     print(f"[+] JSON report: {json_path}")
     print(f"[+] Markdown report: {md_path}")
+    print(f"[+] Findings CSV: {csv_path}")
     return 0
 
 
