@@ -20,8 +20,10 @@ A **passive, scope-limited** OSINT script for cybersecurity students and defende
 - Passive subdomain discovery (crt.sh)
 - HTTP header/title fingerprint
 - TLS certificate metadata
-- Severity-tagged findings (`info`/`low`/`medium`)
-- Output formats: JSON + Markdown + CSV findings
+- Severity-tagged findings (`info`/`low`/`medium`) + confidence scoring (`low`/`medium`/`high`)
+- Output formats: JSON + Markdown + HTML + CSV findings
+- Batch mode (`--targets-file`) + combined batch CSV
+- Delta mode (`--baseline-dir`) to show new/removed findings
 - Optional enrichment: Shodan + Censys (via environment variables)
 
 ## Usage
@@ -35,6 +37,8 @@ python3 osint.py example.com --max-subdomains 200
 python3 osint.py https://portal.example.com --scope scope.txt
 python3 osint.py 203.0.113.10 --scope scope.txt
 python3 osint.py example.com --no-enrich
+python3 osint.py --targets-file targets.txt --scope scope.txt --outdir outputs
+python3 osint.py example.com --baseline-dir previous_outputs --outdir outputs
 ```
 
 ## Scope file format (`scope.txt`)
@@ -66,7 +70,9 @@ Rules supported:
 ## Output
 - `outputs/<target>.json` — machine-readable full report
 - `outputs/<target>.md` — human-readable summary
-- `outputs/<target>.findings.csv` — severity-tagged findings table
+- `outputs/<target>.html` — recruiter-friendly visual report
+- `outputs/<target>.findings.csv` — severity/confidence findings table
+- `outputs/batch.findings.csv` — combined findings from batch mode
 
 ## Optional Enrichment (API keys)
 Set environment variables to enable passive enrichment:

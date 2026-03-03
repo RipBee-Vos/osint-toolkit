@@ -1,0 +1,33 @@
+name: passive-osint-scan
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "30 13 * * 1" # Mondays 13:30 UTC
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run passive OSINT batch
+        env:
+          SHODAN_API_KEY: ${{ secrets.SHODAN_API_KEY }}
+          CENSYS_API_ID: ${{ secrets.CENSYS_API_ID }}
+          CENSYS_API_SECRET: ${{ secrets.CENSYS_API_SECRET }}
+        run: |
+          mkdir -p outputs
+          python3 osint.py --targets-file targets.txt --scope scope.txt --outdir outputs
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: osint-outputs
+          path: outputs/

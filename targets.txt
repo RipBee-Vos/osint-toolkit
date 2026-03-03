@@ -1,0 +1,3 @@
+# Batch targets (authorized scope only)
+example.com
+www.example.com
