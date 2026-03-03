@@ -149,3 +149,12 @@ Outputs are written to `self_audit_outputs/` (JSON + Markdown + CSV).
 python3 self_audit_gui.py
 ```
 Open: `http://127.0.0.1:8770`
+
+## People search mode (query links, no scraping)
+Generate legal/ethical search links for public profile discovery:
+
+```bash
+python3 people_search.py "Jane Doe" --location "Austin, TX" --company "Example Corp"
+```
+
+Outputs are written to `people_search_outputs/` (JSON + Markdown with search URLs).
