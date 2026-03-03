@@ -5,6 +5,7 @@ from __future__ import annotations
 import html
 import json
 import subprocess
+import sys
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
@@ -16,7 +17,7 @@ PORT = 8765
 
 def run_scan(target: str, scope: str, outdir: str, no_enrich: bool, max_subdomains: int) -> tuple[int, str]:
     cmd = [
-        "python3",
+        sys.executable,
         str(ROOT / "osint.py"),
         target,
         "--scope",
@@ -29,7 +30,10 @@ def run_scan(target: str, scope: str, outdir: str, no_enrich: bool, max_subdomai
     if no_enrich:
         cmd.append("--no-enrich")
 
-    p = subprocess.run(cmd, capture_output=True, text=True, cwd=str(ROOT))
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True, cwd=str(ROOT))
+    except FileNotFoundError as exc:
+        return 1, f"Unable to start scan process: {exc}"
     output = (p.stdout or "") + ("\n" + p.stderr if p.stderr else "")
     return p.returncode, output.strip()
 
