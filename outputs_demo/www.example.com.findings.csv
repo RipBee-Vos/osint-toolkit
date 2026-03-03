@@ -1,0 +1,3 @@
+target,id,severity,confidence,evidence,recommendation
+www.example.com,missing_hsts,low,high,HSTS header not observed,Add Strict-Transport-Security header
+www.example.com,server_banner_exposed,info,high,Server header present: cloudflare,Reduce banner detail where possible

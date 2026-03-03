@@ -112,6 +112,15 @@ Include in your repo:
 python3 osint.py --targets-file demo_targets.txt --scope scope.txt --outdir outputs --no-enrich
 ```
 
+## One-command portfolio demo
+```bash
+chmod +x run_portfolio_demo.sh
+./run_portfolio_demo.sh
+```
+Generates:
+- `PORTFOLIO_SUMMARY.md`
+- `outputs_demo/` artifacts (JSON/MD/HTML/CSV)
+
 ## Bug-bounty safe scope import
 Prepare `assets.txt` from program in-scope assets (one per line), then import:
 ```bash
