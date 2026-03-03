@@ -1,0 +1,3 @@
+# Sample authorized targets only
+example.com
+www.example.com

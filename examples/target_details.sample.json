@@ -1,0 +1,14 @@
+{
+  "target_kind": "person",
+  "target": "Jane Doe",
+  "name": "Jane Doe",
+  "aliases": ["Janie"],
+  "location": {
+    "city": "Austin",
+    "state_region": "TX",
+    "country": "US"
+  },
+  "usernames": ["janedoe"],
+  "emails": ["jane@example.com"],
+  "notes": "Sample seed data for local testing only."
+}

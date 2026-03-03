@@ -32,9 +32,12 @@ import ssl
 import sys
 import urllib.parse
 import urllib.request
+import urllib.error
 from pathlib import Path
 
-USER_AGENT = "Ethical-OSINT-Toolkit/1.4"
+USER_AGENT = "Ethical-OSINT-Toolkit/1.5"
+REPORT_VERSION = "1.1"
+TOOL_NAME = "Ethical OSINT Toolkit"
 CRT_SH = "https://crt.sh/?q={query}&output=json"
 RDAP_HINT = "https://rdap.org/domain/{domain}"
 SHODAN_HOST_API = "https://api.shodan.io/shodan/host/{target}?key={key}"
@@ -232,19 +235,75 @@ def export_pivots(outdir: Path, stem: str, pivots: list[dict]) -> None:
     (outdir / f"{stem}.pivots.txt").write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
 
 
-def http_get(url: str, timeout: int = 12, headers: dict | None = None) -> str:
+def http_get(url: str, timeout: int = 12, headers: dict | None = None) -> dict:
     hdr = {"User-Agent": USER_AGENT}
     if headers:
         hdr.update(headers)
     req = urllib.request.Request(url, headers=hdr)
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return r.read().decode("utf-8", errors="replace")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return {
+                "ok": True,
+                "url": url,
+                "status": getattr(r, "status", None),
+                "text": r.read().decode("utf-8", errors="replace"),
+                "error": None,
+            }
+    except urllib.error.HTTPError as exc:
+        return {
+            "ok": False,
+            "url": url,
+            "status": exc.code,
+            "text": exc.read().decode("utf-8", errors="replace") if hasattr(exc, "read") else "",
+            "error": {"type": "http_error", "message": f"HTTP {exc.code}"},
+        }
+    except urllib.error.URLError as exc:
+        reason = exc.reason
+        if isinstance(reason, socket.timeout):
+            err_type = "timeout"
+            msg = "request timed out"
+        elif isinstance(reason, socket.gaierror):
+            err_type = "dns_error"
+            msg = f"dns failure: {reason}"
+        else:
+            err_type = "network_error"
+            msg = str(reason)
+        return {
+            "ok": False,
+            "url": url,
+            "status": None,
+            "text": "",
+            "error": {"type": err_type, "message": msg},
+        }
+    except socket.timeout:
+        return {
+            "ok": False,
+            "url": url,
+            "status": None,
+            "text": "",
+            "error": {"type": "timeout", "message": "request timed out"},
+        }
+    except Exception as exc:
+        return {
+            "ok": False,
+            "url": url,
+            "status": None,
+            "text": "",
+            "error": {"type": "unknown_error", "message": str(exc)},
+        }
 
 
 def normalize_target(value: str) -> str:
     v = (value or "").strip().lower()
     if "://" in v:
         v = urllib.parse.urlparse(v).hostname or v
+    return v.rstrip(".")
+
+
+def normalize_domain_for_match(value: str) -> str:
+    v = normalize_target(value)
+    if v.startswith("*."):
+        v = v[2:]
     return v.rstrip(".")
 
 
@@ -287,6 +346,7 @@ def load_scope(scope_file: Path) -> dict:
         if not line or line.startswith("#"):
             continue
         mode, entry = parse_scope_entry(line)
+        entry = normalize_domain_for_match(entry)
         bucket = "allow" if mode == "allow" else "deny"
         try:
             parsed[f"{bucket}_cidrs"].append(ipaddress.ip_network(entry, strict=False))
@@ -304,11 +364,23 @@ def load_scope(scope_file: Path) -> dict:
 
 
 def domain_matches(host: str, domains: set[str], wildcards: set[str]) -> bool:
-    if host in domains:
+    """Return True when host matches configured domain scope rules.
+
+    Semantics:
+    - "example.com" matches "example.com" and any subdomain.
+    - "*.example.com" also matches "example.com" and any subdomain.
+    - Trailing dots are ignored during matching.
+    """
+    host_n = normalize_domain_for_match(host)
+    if not host_n:
+        return False
+
+    norm_domains = {normalize_domain_for_match(d) for d in domains if d}
+    norm_wildcards = {normalize_domain_for_match(w) for w in wildcards if w}
+
+    if any(host_n == d or host_n.endswith("." + d) for d in norm_domains):
         return True
-    if any(host == d or host.endswith("." + d) for d in domains):
-        return True
-    if any(host.endswith("." + w) for w in wildcards):
+    if any(host_n == w or host_n.endswith("." + w) for w in norm_wildcards):
         return True
     return False
 
@@ -367,7 +439,10 @@ def dns_lookup(domain: str) -> dict:
         pass
     for rtype in ["NS", "MX", "TXT"]:
         try:
-            data = json.loads(http_get(f"https://dns.google/resolve?name={urllib.parse.quote(domain)}&type={rtype}"))
+            resp = http_get(f"https://dns.google/resolve?name={urllib.parse.quote(domain)}&type={rtype}")
+            if not resp.get("ok"):
+                continue
+            data = json.loads(resp.get("text") or "{}")
             for ans in data.get("Answer", []):
                 out[rtype].append(ans.get("data", ""))
         except Exception:
@@ -380,7 +455,12 @@ def dns_lookup(domain: str) -> dict:
 def rdap_lookup(domain: str) -> dict:
     out = {"source": RDAP_HINT.format(domain=domain), "status": "unknown", "raw": None}
     try:
-        data = json.loads(http_get(out["source"]))
+        resp = http_get(out["source"])
+        if not resp.get("ok"):
+            err = resp.get("error") or {}
+            out["status"] = f"error: {err.get('type','request_failed')} ({err.get('message','unknown')})"
+            return out
+        data = json.loads(resp.get("text") or "{}")
         out["status"] = "ok"
         out["raw"] = {
             "ldhName": data.get("ldhName"),
@@ -396,8 +476,10 @@ def rdap_lookup(domain: str) -> dict:
 def passive_subdomains(domain: str, max_items: int = 100) -> list[str]:
     found = set()
     try:
-        raw = http_get(CRT_SH.format(query=urllib.parse.quote(f"%.{domain}")))
-        for row in json.loads(raw):
+        resp = http_get(CRT_SH.format(query=urllib.parse.quote(f"%.{domain}")))
+        if not resp.get("ok"):
+            return []
+        for row in json.loads(resp.get("text") or "[]"):
             for candidate in row.get("name_value", "").splitlines():
                 c = candidate.strip().lower().replace("*.", "")
                 if c.endswith("." + domain) or c == domain:
@@ -408,7 +490,8 @@ def passive_subdomains(domain: str, max_items: int = 100) -> list[str]:
 
 
 def http_fingerprint(host: str) -> dict:
-    result = {"url": None, "status": None, "headers": {}, "title": None, "tls": {}}
+    result = {"url": None, "status": None, "headers": {}, "title": None, "tls": {"status": "skipped: https request did not succeed"}}
+    https_ok = False
     for scheme in ["https", "http"]:
         try:
             req = urllib.request.Request(f"{scheme}://{host}", headers={"User-Agent": USER_AGENT})
@@ -418,23 +501,30 @@ def http_fingerprint(host: str) -> dict:
                 m = re.search(r"<title[^>]*>(.*?)</title>", html_doc, re.I | re.S)
                 if m:
                     result["title"] = re.sub(r"\s+", " ", m.group(1)).strip()
+                if scheme == "https":
+                    https_ok = True
                 break
         except Exception:
             continue
+
+    if not https_ok:
+        return result
+
     try:
         ctx = ssl.create_default_context()
-        with socket.create_connection((host, 443), timeout=8) as sock:
+        with socket.create_connection((host, 443), timeout=5) as sock:
             with ctx.wrap_socket(sock, server_hostname=host) as ssock:
                 cert = ssock.getpeercert()
                 result["tls"] = {
+                    "status": "ok",
                     "subject": cert.get("subject"),
                     "issuer": cert.get("issuer"),
                     "notBefore": cert.get("notBefore"),
                     "notAfter": cert.get("notAfter"),
                     "subjectAltName": cert.get("subjectAltName"),
                 }
-    except Exception:
-        pass
+    except Exception as exc:
+        result["tls"] = {"status": f"error: {exc}"}
     return result
 
 
@@ -460,7 +550,12 @@ def shodan_enrich(target: str) -> dict:
     hosts = []
     for ip in ips[:3]:
         try:
-            data = json.loads(http_get(SHODAN_HOST_API.format(target=ip, key=urllib.parse.quote(key)), timeout=15))
+            resp = http_get(SHODAN_HOST_API.format(target=ip, key=urllib.parse.quote(key)), timeout=15)
+            if not resp.get("ok"):
+                err = resp.get("error") or {}
+                hosts.append({"ip": ip, "error": f"{err.get('type','request_failed')}: {err.get('message','unknown')}"})
+                continue
+            data = json.loads(resp.get("text") or "{}")
             hosts.append(
                 {
                     "ip": ip,
@@ -488,7 +583,12 @@ def censys_enrich(target: str) -> dict:
     hosts = []
     for ip in ips[:3]:
         try:
-            data = json.loads(http_get(CENSYS_HOST_API.format(target=ip), timeout=15, headers=headers))
+            resp = http_get(CENSYS_HOST_API.format(target=ip), timeout=15, headers=headers)
+            if not resp.get("ok"):
+                err = resp.get("error") or {}
+                hosts.append({"ip": ip, "error": f"{err.get('type','request_failed')}: {err.get('message','unknown')}"})
+                continue
+            data = json.loads(resp.get("text") or "{}")
             services = data.get("result", {}).get("services", [])
             hosts.append(
                 {
@@ -513,7 +613,7 @@ def confidence_for_finding(fid: str, report: dict) -> str:
 def compute_findings(report: dict) -> list[dict]:
     findings = []
     hdrs = report.get("http", {}).get("headers", {})
-    if report.get("http", {}).get("url", "").startswith("http://"):
+    if (report.get("http", {}).get("url") or "").startswith("http://"):
         findings.append({"id": "http_no_tls", "severity": "medium", "evidence": "Site responded over HTTP", "recommendation": "Prefer HTTPS-only with HSTS"})
     if hdrs and "Strict-Transport-Security" not in hdrs:
         findings.append({"id": "missing_hsts", "severity": "low", "evidence": "HSTS header not observed", "recommendation": "Add Strict-Transport-Security header"})
@@ -853,7 +953,7 @@ def _seed_findings_from_validation(validation: dict) -> list[dict]:
     return findings
 
 
-def build_seed_report(target: str, args) -> dict:
+def build_seed_report(target: str, args, run_id: str) -> dict:
     details = getattr(args, "target_details_data", {}) or {}
     details.setdefault("target_kind", getattr(args, "target_kind", "person"))
     details.setdefault("target", target)
@@ -887,9 +987,12 @@ def build_seed_report(target: str, args) -> dict:
     confidence = identity_confidence(details)
 
     report = {
+        **report_metadata(run_id),
         "target": target,
         "target_kind": getattr(args, "target_kind", "person"),
-        "generated_at": dt.datetime.now(dt.UTC).isoformat(),
+        "generated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "scope_result": "N/A",
+        "scope_note": "seed+pivots mode, no automated recon",
         "scope_check": "PASS",
         "scope_reason": "seed+pivots mode (no automated network recon; manual pivots only)",
         "details": details,
@@ -1019,16 +1122,14 @@ def build_html(report: dict) -> str:
                 g = links.get("google", "")
                 b = links.get("bing", "")
                 d = links.get("duckduckgo", "")
-
+                g_link = f'<a href="{g}" target="_blank">Google</a> ' if g else ""
+                b_link = f'<a href="{b}" target="_blank">Bing</a> ' if b else ""
+                d_link = f'<a href="{d}" target="_blank">DDG</a>' if d else ""
                 tr.append(
                     "<tr>"
                     f"<td>{html_escape(label)}</td>"
                     f"<td><code>{html_escape(q)}</code></td>"
-                    f"<td>"
-                    f"{(f'<a href=\"{g}\" target=\"_blank\">Google</a> ' if g else '')}"
-                    f"{(f'<a href=\"{b}\" target=\"_blank\">Bing</a> ' if b else '')}"
-                    f"{(f'<a href=\"{d}\" target=\"_blank\">DDG</a>' if d else '')}"
-                    f"</td>"
+                    f"<td>{g_link}{b_link}{d_link}</td>"
                     "</tr>"
                 )
 
@@ -1086,15 +1187,24 @@ def write_report_bundle(outdir: Path, stem: str, report: dict) -> None:
         export_pivots(outdir, stem, report["pivots"])
 
 
+def report_metadata(run_id: str) -> dict:
+    return {
+        "tool_name": TOOL_NAME,
+        "tool_version": USER_AGENT.split("/", 1)[1] if "/" in USER_AGENT else USER_AGENT,
+        "report_version": REPORT_VERSION,
+        "run_id": run_id,
+    }
+
+
 # ---------------------------
 # Execution
 # ---------------------------
 
-def run_target(target: str, args, scope: dict) -> tuple[int, dict | None]:
+def run_target(target: str, args, scope: dict, run_id: str) -> tuple[int, dict | None]:
     target_kind = getattr(args, "target_kind", "domain")
 
     if target_kind in {"person", "username", "email"}:
-        report = build_seed_report(target, args)
+        report = build_seed_report(target, args, run_id)
         outdir = Path(args.outdir)
         write_report_bundle(outdir, "seed", report)
         print(f"[+] Wrote seed+pivots reports for {target}")
@@ -1106,9 +1216,12 @@ def run_target(target: str, args, scope: dict) -> tuple[int, dict | None]:
         return 3, None
 
     report = {
+        **report_metadata(run_id),
         "target": target,
         "target_kind": "domain",
-        "generated_at": dt.datetime.now(dt.UTC).isoformat(),
+        "generated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "scope_result": "PASS",
+        "scope_note": reason,
         "scope_check": "PASS",
         "scope_reason": reason,
         "dns": dns_lookup(target) if not is_ip(target) else {},
@@ -1215,9 +1328,10 @@ def main() -> int:
         scope = load_scope(scope_path)
 
     targets = load_targets(args)
+    run_id = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     reports, failed = [], 0
     for t in targets:
-        rc, report = run_target(t, args, scope)
+        rc, report = run_target(t, args, scope, run_id)
         if rc == 0 and report:
             reports.append(report)
         else:

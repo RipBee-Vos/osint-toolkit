@@ -63,7 +63,7 @@ One rule per line. Default mode is `allow:`.
 # Allow root domain (+ all subdomains)
 example.com
 
-# Explicit wildcard (subdomains only, not apex)
+# Explicit wildcard (apex + subdomains)
 allow:*.corp.example
 
 # Allow an IP or CIDR
@@ -81,6 +81,29 @@ Rules supported:
 - IPv4/IPv6
 - CIDR blocks
 - `allow:` / `deny:` prefixes (`deny` always wins)
+
+
+## Scope semantics
+- Domain mode enforces scope rules from `scope.txt`.
+- `example.com` matches the apex and all subdomains.
+- `*.example.com` also matches the apex and all subdomains.
+- `deny:` rules always win over `allow:` rules.
+- Trailing dots are normalized during matching.
+
+## GUI usage
+- Run `python3 osint_gui.py` and open `http://127.0.0.1:8765`.
+- Domain target type keeps scope and domain scan controls visible.
+- Person, username, and email target types keep seed fields and manual pivot options visible.
+- GUI writes each run to `outputs/<run_id>/` with JSON, Markdown, HTML, findings CSV, pivots exports, and `target_details.json`.
+
+## Local sample data and ignore suggestions
+- Sample targets file: `examples/targets.sample.txt`.
+- Sample target details: `examples/target_details.sample.json`.
+- Keep local artifacts out of git with:
+  - `outputs/`
+  - `.venv/`
+  - `*.local.*`
+  - `targets.local.txt`
 
 ## Output
 - `outputs/<target>.json` — machine-readable full report
