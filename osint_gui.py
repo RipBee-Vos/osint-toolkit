@@ -52,7 +52,7 @@ def _parse_lines(raw: str, max_items: int = 25, max_each: int = MAX_TEXT) -> lis
 
 
 def _validate_target(target_kind: str, target: str) -> tuple[bool, str]:
-    target_kind = (target_kind or "").strip()
+    target_kind = (target_kind or "").strip().lower()
     target = (target or "").strip()
 
     if not target:
@@ -99,11 +99,8 @@ def _build_target_details(form: dict[str, list[str]], target_kind: str, target: 
         "notes": get("notes", MAX_NOTES),
     }
 
-    # Drop empty location keys
     details["location"] = {k: v for k, v in details["location"].items() if v}
-    # Drop empty social keys (keep "other" only if not empty)
     details["social"] = {k: v for k, v in details["social"].items() if v}
-
     return details
 
 
@@ -115,6 +112,7 @@ def run_scan(
     max_subdomains: int,
     target_kind: str,
     details_path: str | None,
+    blanket_pivots: bool,
 ) -> tuple[int, str]:
     cmd = [
         sys.executable,
@@ -128,11 +126,13 @@ def run_scan(
         str(max_subdomains),
     ]
 
-    # Optional flags (requires osint.py support)
     if target_kind:
         cmd.extend(["--target-kind", target_kind])
     if details_path:
         cmd.extend(["--target-details", details_path])
+
+    if blanket_pivots:
+        cmd.append("--blanket-pivots")
 
     if no_enrich:
         cmd.append("--no-enrich")
@@ -155,6 +155,58 @@ def list_reports() -> list[str]:
         if p.is_file() and p.suffix.lower() in exts:
             files.append(str(p.relative_to(OUT)))
     return sorted(files)
+
+
+def _guess_run_outputs(run_dir: Path, target_kind: str, target_value: str) -> list[Path]:
+    candidates: list[Path] = []
+
+    td = run_dir / "target_details.json"
+    if td.exists():
+        candidates.append(td)
+
+    if target_kind in {"person", "username", "email"}:
+        for name in (
+            "seed.html",
+            "seed.md",
+            "seed.json",
+            "seed.findings.csv",
+            "seed.pivots.json",
+            "seed.pivots.csv",
+            "seed.pivots.txt",
+            "batch.findings.csv",
+        ):
+            p = run_dir / name
+            if p.exists():
+                candidates.append(p)
+        return candidates
+
+    stem = (
+        (target_value or "")
+        .replace("*", "wildcard")
+        .replace("/", "_")
+        .replace(":", "_")
+    )
+
+    for name in (
+        f"{stem}.html",
+        f"{stem}.md",
+        f"{stem}.json",
+        f"{stem}.findings.csv",
+        f"{stem}.pivots.json",
+        f"{stem}.pivots.csv",
+        f"{stem}.pivots.txt",
+        "batch.findings.csv",
+    ):
+        p = run_dir / name
+        if p.exists():
+            candidates.append(p)
+
+    if not candidates:
+        for p in sorted(run_dir.glob("*")):
+            if p.is_file():
+                candidates.append(p)
+
+    return candidates
 
 
 def _page(title: str, body: str) -> bytes:
@@ -184,7 +236,6 @@ class Handler(BaseHTTPRequestHandler):
             out_root = OUT.resolve()
             target = (OUT / name).resolve()
 
-            # Prevent traversal and only serve files under outputs/
             if not str(target).startswith(str(out_root)) or not target.exists() or not target.is_file():
                 self.send_response(404)
                 self.end_headers()
@@ -303,7 +354,11 @@ class Handler(BaseHTTPRequestHandler):
     </label>
 
     <label style="display:block; margin-top: 6px;">
-      <input name="no_enrich" type="checkbox" checked /> No enrichment
+      <input name="no_enrich" type="checkbox" checked /> No enrichment (domain mode)
+    </label>
+
+    <label style="display:block; margin-top: 6px;">
+      <input name="blanket_pivots" type="checkbox" checked /> Blanket pivots (person/username/email modes)
     </label>
   </fieldset>
 
@@ -332,7 +387,7 @@ class Handler(BaseHTTPRequestHandler):
         raw = self.rfile.read(length).decode("utf-8", errors="replace")
         data = urllib.parse.parse_qs(raw)
 
-        target_kind = _clamp(data.get("target_kind", ["domain"])[0], 20) or "domain"
+        target_kind = _clamp(data.get("target_kind", ["domain"])[0], 20).lower() or "domain"
         target = _clamp(data.get("target", [""])[0], 253)
 
         ok, msg = _validate_target(target_kind, target)
@@ -351,6 +406,7 @@ class Handler(BaseHTTPRequestHandler):
         scope = _clamp(data.get("scope", ["scope.txt"])[0], 200) or "scope.txt"
         outdir_root = _clamp(data.get("outdir", ["outputs"])[0], 200) or "outputs"
         no_enrich = "no_enrich" in data
+        blanket_pivots = "blanket_pivots" in data
         max_subdomains = _safe_int(data.get("max_subdomains", ["100"])[0], default=100, min_v=1, max_v=1000)
 
         run_id = _now_run_id()
@@ -369,17 +425,28 @@ class Handler(BaseHTTPRequestHandler):
             max_subdomains=max_subdomains,
             target_kind=target_kind,
             details_path=str(details_path),
+            blanket_pivots=blanket_pivots,
         )
 
         status = "PASS" if rc == 0 else f"FAIL (rc={rc})"
-
-        # Link to the details JSON from the outputs root
         rel_details = str(details_path.relative_to(OUT)) if OUT in details_path.parents else str(details_path.name)
+
+        produced = _guess_run_outputs(run_dir, target_kind, target)
+        links = []
+        for p in produced:
+            rel = str(p.relative_to(OUT)) if OUT in p.parents else p.name
+            label = p.name
+            links.append(f"<li><a href='/file?name={urllib.parse.quote(rel)}' target='_blank'>{html.escape(label)}</a></li>")
+        produced_html = "<ul>" + "".join(links) + "</ul>" if links else "<p><i>No outputs found in the run folder.</i></p>"
 
         body = f"""
 <h1>Run Result: {html.escape(status)}</h1>
 <p><b>Run folder:</b> {html.escape(str(run_dir.relative_to(ROOT)))}</p>
 <p><b>Target details:</b> <a href="/file?name={urllib.parse.quote(rel_details)}" target="_blank">target_details.json</a></p>
+
+<h2>Generated Reports</h2>
+{produced_html}
+
 <pre style="white-space:pre-wrap; background:#f5f5f5; padding:12px; border-radius:10px; border:1px solid #ddd;">{html.escape(output or "(no output)")}</pre>
 <p><a href="/">Back</a></p>
 """
