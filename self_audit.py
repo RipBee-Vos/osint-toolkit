@@ -15,6 +15,7 @@ import json
 import re
 import urllib.parse
 import urllib.request
+import urllib.error
 from pathlib import Path
 
 UA = "Self-OSINT-Audit/1.0"
@@ -32,11 +33,21 @@ def load_allowlist(path: Path) -> set[str]:
 
 def get_html(url: str, timeout: int = 12) -> tuple[int | None, dict, str]:
     req = urllib.request.Request(url, headers={"User-Agent": UA})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        status = getattr(r, "status", None)
-        headers = dict(r.headers)
-        html = r.read(300000).decode("utf-8", errors="replace")
-        return status, headers, html
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            status = getattr(r, "status", None)
+            headers = dict(r.headers)
+            html = r.read(300000).decode("utf-8", errors="replace")
+            return status, headers, html
+    except urllib.error.HTTPError as e:
+        body = ""
+        try:
+            body = e.read(300000).decode("utf-8", errors="replace")
+        except Exception:
+            pass
+        return e.code, dict(e.headers or {}), body
+    except Exception:
+        return None, {}, ""
 
 
 def title_from_html(text: str) -> str | None:
@@ -119,6 +130,13 @@ def main() -> int:
     title = title_from_html(html)
     desc = meta_description(html)
     findings = simple_findings(url, headers, html)
+    if status == 999:
+        findings.append({
+            "id": "platform_request_blocked",
+            "severity": "info",
+            "evidence": "HTTP 999 request denied by platform anti-automation controls",
+            "recommendation": "Use manual browser review for this platform and treat automated fetch as limited",
+        })
 
     outdir = Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
