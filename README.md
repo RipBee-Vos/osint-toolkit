@@ -126,3 +126,11 @@ Prepare `assets.txt` from program in-scope assets (one per line), then import:
 ```bash
 python3 import_scope.py assets.txt scope.txt
 ```
+
+## Self-OSINT mode (your own profiles only)
+1. Add your own URLs to `my_profiles.txt`
+2. Run:
+```bash
+python3 self_audit.py "https://www.linkedin.com/in/your-handle/" --allowlist my_profiles.txt
+```
+Outputs are written to `self_audit_outputs/` (JSON + Markdown + CSV).
