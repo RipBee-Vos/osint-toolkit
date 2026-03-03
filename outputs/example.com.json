@@ -1,0 +1,135 @@
+{
+  "target": "example.com",
+  "generated_at": "2026-03-03T00:58:39.325538Z",
+  "scope_check": "PASS",
+  "dns": {
+    "A": [
+      "104.18.26.120",
+      "104.18.27.120"
+    ],
+    "AAAA": [
+      "2606:4700::6812:1a78",
+      "2606:4700::6812:1b78"
+    ],
+    "NS": [
+      "elliott.ns.cloudflare.com.",
+      "hera.ns.cloudflare.com."
+    ],
+    "MX": [
+      "0 ."
+    ],
+    "TXT": [
+      "_k2n1y4vw3qtb4skdx9e7dxt97qrmmq9",
+      "v=spf1 -all"
+    ]
+  },
+  "rdap": {
+    "source": "https://rdap.org/domain/example.com",
+    "status": "ok",
+    "raw": {
+      "ldhName": "EXAMPLE.COM",
+      "status": [
+        "client delete prohibited",
+        "client transfer prohibited",
+        "client update prohibited"
+      ],
+      "events": [
+        {
+          "eventAction": "registration",
+          "eventDate": "1995-08-14T04:00:00Z"
+        },
+        {
+          "eventAction": "expiration",
+          "eventDate": "2026-08-13T04:00:00Z"
+        },
+        {
+          "eventAction": "last changed",
+          "eventDate": "2026-01-16T18:26:50Z"
+        },
+        {
+          "eventAction": "last update of RDAP database",
+          "eventDate": "2026-03-03T00:58:31Z"
+        }
+      ],
+      "nameservers": [
+        {
+          "objectClassName": "nameserver",
+          "ldhName": "ELLIOTT.NS.CLOUDFLARE.COM"
+        },
+        {
+          "objectClassName": "nameserver",
+          "ldhName": "HERA.NS.CLOUDFLARE.COM"
+        }
+      ]
+    }
+  },
+  "subdomains": [
+    "dev.example.com",
+    "example.com",
+    "m.example.com",
+    "products.example.com",
+    "support.example.com",
+    "www.example.com"
+  ],
+  "http": {
+    "url": "https://example.com",
+    "status": 200,
+    "headers": {
+      "Date": "Tue, 03 Mar 2026 00:58:43 GMT",
+      "Content-Type": "text/html",
+      "Transfer-Encoding": "chunked",
+      "Connection": "close",
+      "CF-RAY": "9d64b1c52846faea-BOS",
+      "last-modified": "Wed, 25 Feb 2026 07:20:54 GMT",
+      "allow": "GET, HEAD",
+      "Accept-Ranges": "bytes",
+      "Age": "6249",
+      "cf-cache-status": "HIT",
+      "Vary": "Accept-Encoding",
+      "Server": "cloudflare"
+    },
+    "title": "Example Domain",
+    "tls": {
+      "subject": [
+        [
+          [
+            "commonName",
+            "example.com"
+          ]
+        ]
+      ],
+      "issuer": [
+        [
+          [
+            "countryName",
+            "US"
+          ]
+        ],
+        [
+          [
+            "organizationName",
+            "SSL Corporation"
+          ]
+        ],
+        [
+          [
+            "commonName",
+            "Cloudflare TLS Issuing ECC CA 3"
+          ]
+        ]
+      ],
+      "notBefore": "Feb 13 18:53:48 2026 GMT",
+      "notAfter": "May 14 18:57:50 2026 GMT",
+      "subjectAltName": [
+        [
+          "DNS",
+          "example.com"
+        ],
+        [
+          "DNS",
+          "*.example.com"
+        ]
+      ]
+    }
+  }
+}

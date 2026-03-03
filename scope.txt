@@ -1,0 +1,2 @@
+# Authorized targets only. Add domains you own or have permission to assess.
+example.com
