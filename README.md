@@ -143,3 +143,9 @@ python3 import_scope.py assets.txt scope.txt
 python3 self_audit.py "https://www.linkedin.com/in/your-handle/" --allowlist my_profiles.txt
 ```
 Outputs are written to `self_audit_outputs/` (JSON + Markdown + CSV).
+
+### Easy GUI for self-audit
+```bash
+python3 self_audit_gui.py
+```
+Open: `http://127.0.0.1:8770`
